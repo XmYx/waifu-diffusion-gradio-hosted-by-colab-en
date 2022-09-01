@@ -350,9 +350,6 @@ def arger(animation_prompts, prompts, animation_mode, strength, max_frames, bord
 
 
 def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool):
-
-
-
     images = []
     def generate(args, return_latent=False, return_sample=False, return_c=False):
 
@@ -362,8 +359,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 
         mem_mon = MemUsageMonitor('MemMon')
         mem_mon.start()
-
-
 
         seed_everything(args.seed)
         os.makedirs(args.outdir, exist_ok=True)
@@ -668,75 +663,78 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         return key_frame_series
 
     def render_image_batch(args):
-        args.prompts = prompts
+      args.prompts = prompts
+      # create output folder for the batch
+      os.makedirs(args.outdir, exist_ok=True)
+      if args.save_settings or args.save_samples:
+          print(f"Saving to {os.path.join(args.outdir, args.timestring)}_*")
 
-        # create output folder for the batch
-        os.makedirs(args.outdir, exist_ok=True)
-        if args.save_settings or args.save_samples:
-            print(f"Saving to {os.path.join(args.outdir, args.timestring)}_*")
+      # save settings for the batch
+      if args.save_settings:
+          filename = os.path.join(args.outdir, f"{args.timestring}_settings.txt")
+          with open(filename, "w+", encoding="utf-8") as f:
+              json.dump(dict(args.__dict__), f, ensure_ascii=False, indent=4)
 
-        # save settings for the batch
-        if args.save_settings:
-            filename = os.path.join(args.outdir, f"{args.timestring}_settings.txt")
-            with open(filename, "w+", encoding="utf-8") as f:
-                json.dump(dict(args.__dict__), f, ensure_ascii=False, indent=4)
+      index = 0
 
-        index = 0
+      # function for init image batching
+      init_array = []
+      if args.use_init:
+          if args.init_image == "":
+              raise FileNotFoundError("No path was given for init_image")
+          if args.init_image.startswith('http://') or args.init_image.startswith('https://'):
+              init_array.append(args.init_image)
+          elif not os.path.isfile(args.init_image):
+              if args.init_image[-1] != "/": # avoids path error by adding / to end if not there
+                  args.init_image += "/"
+              for image in sorted(os.listdir(args.init_image)): # iterates dir and appends images to init_array
+                  if image.split(".")[-1] in ("png", "jpg", "jpeg"):
+                      init_array.append(args.init_image + image)
+          else:
+              init_array.append(args.init_image)
+      else:
+          init_array = [""]
 
-        # function for init image batching
-        init_array = []
-        if args.use_init:
-            if args.init_image == "":
-                raise FileNotFoundError("No path was given for init_image")
-            if args.init_image.startswith('http://') or args.init_image.startswith('https://'):
-                init_array.append(args.init_image)
-            elif not os.path.isfile(args.init_image):
-                if args.init_image[-1] != "/": # avoids path error by adding / to end if not there
-                    args.init_image += "/"
-                for image in sorted(os.listdir(args.init_image)): # iterates dir and appends images to init_array
-                    if image.split(".")[-1] in ("png", "jpg", "jpeg"):
-                        init_array.append(args.init_image + image)
-            else:
-                init_array.append(args.init_image)
-        else:
-            init_array = [""]
+      # when doing large batches don't flood browser with images
+      clear_between_batches = args.n_batch >= 32
+      args.z = []
+      for iprompt, prompt in enumerate(prompts):
+          args.prompt = prompt
 
-        # when doing large batches don't flood browser with images
-        clear_between_batches = args.n_batch >= 32
+          all_images = []
 
-        for iprompt, prompt in enumerate(prompts):
-            args.prompt = prompt
+          for batch_index in range(args.n_batch):
+              if clear_between_batches:
+                  display.clear_output(wait=True)
+              print(f"Batch {batch_index+1} of {args.n_batch}")
 
-            all_images = []
+              for image in init_array: # iterates the init images
+                  args.init_image = image
+                  results = generate(args)
 
-            for batch_index in range(args.n_batch):
-                if clear_between_batches:
-                    display.clear_output(wait=True)
-                print(f"Batch {batch_index+1} of {args.n_batch}")
+                  for image in results:
+                      if args.make_grid:
+                          all_images.append(T.functional.pil_to_tensor(image))
+                      if args.save_samples:
+                          filename = f"{args.timestring}_{index:05}_{args.seed}.png"
+                          image.save(os.path.join(args.outdir, filename))
+                          args.z.append(os.path.join(args.outdir, filename))
+                      #if args.display_samples:
+                          #display.display(image)
+                      index += 1
+                  args.seed = next_seed(args)
 
-                for image in init_array: # iterates the init images
-                    args.init_image = image
-                    results = generate(args)
-                    for image in results:
-                        if args.make_grid:
-                            all_images.append(T.functional.pil_to_tensor(image))
-                        if args.save_samples:
-                            filename = f"{args.timestring}_{index:05}_{args.seed}.png"
-                            image.save(os.path.join(args.outdir, filename))
-                        if args.display_samples:
-                            display.display(image)
-                        index += 1
-                    args.seed = next_seed(args)
 
-            #print(len(all_images))
-            if args.make_grid:
-                grid = make_grid(all_images, nrow=int(len(all_images)/args.grid_rows))
-                grid = rearrange(grid, 'c h w -> h w c').cpu().numpy()
-                filename = f"{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
-                grid_image = Image.fromarray(grid.astype(np.uint8))
-                grid_image.save(os.path.join(args.outdir, filename))
-                display.clear_output(wait=True)
-                display.display(grid_image)
+        #print(len(all_images))
+          if args.make_grid:
+              grid = make_grid(all_images, nrow=int(len(all_images)/args.grid_rows))
+              grid = rearrange(grid, 'c h w -> h w c').cpu().numpy()
+              filename = f"{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
+              grid_image = Image.fromarray(grid.astype(np.uint8))
+              grid_image.save(os.path.join(args.outdir, filename))
+              images.append(grid_image)
+              #display.clear_output(wait=True)
+              #display.display(grid_image)
 
     def render_input_video(args):
         # create a folder for the video input frames to live in
@@ -795,7 +793,7 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
           prompts_c_s.append(c)
 
           # display.clear_output(wait=True)
-          display.display(image)
+          #display.display(image)
 
           args.seed = next_seed(args)
 
@@ -895,7 +893,7 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
     args.timestring = time.strftime('%Y%m%d%H%M%S')
     args.outdir = f'{args.outdir}/{args.timestring}'
     args.strength = max(0.0, min(1.0, args.strength))
-
+    args.returns = {}
     if args.seed == -1:
         args.seed = random.randint(0, 2**32)
     if args.animation_mode == 'Video Input':
@@ -911,17 +909,22 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 
     if args.animation_mode == '2D':
         render_animation(args)
+        makevideo(args)
+        return args.mp4_path
     elif args.animation_mode == 'Video Input':
         render_input_video(args)
+        makevideo(args)
+        return args.mp4_path
     elif args.animation_mode == 'Interpolation':
         render_interpolation(args)
+        makevideo(args)
+        return args.mp4_path
     else:
         render_image_batch(args)
+        return args.z
 
-    print(angle_series)
-    makevideo(args)
-    #return images
-    return args.mp4_path
+
+
 
 anim = gr.Interface(
     anim,
@@ -930,7 +933,6 @@ anim = gr.Interface(
         gr.Textbox(label='Prompts',  placeholder="a beautiful forest by Asher Brown Durand, trending on Artstation\na beautiful city by Asher Brown Durand, trending on Artstation", lines=5),#animation_prompts
         gr.Checkbox(label='KeyFrames', value=True, visible=True),#key_frames
         gr.Textbox(label='Keyframes or Prompts for batch',  placeholder="0\n5 ", lines=5, value="0\n5"),#prompts
-
         gr.Textbox(label='Batch Name',  placeholder="Batch_001", lines=1, value="SDAnim"),#batch_name
         gr.Textbox(label='Output Dir',  placeholder="/content/", lines=1, value='/gdrive/MyDrive/sd_anims/'),#outdir
         gr.Slider(minimum=1, maximum=1000, step=1, label='Frames to render', value=100),#max_frames
@@ -959,7 +961,7 @@ anim = gr.Interface(
         gr.Checkbox(label='Save Grid', value=False, visible=False),#save_grid
         gr.Checkbox(label='Save Settings', value=True, visible=True),#save_settings
         gr.Checkbox(label='Save Samples', value=True, visible=True),#save_samples
-        gr.Checkbox(label='Display Samples', value=True, visible=False),#display_samples
+        gr.Checkbox(label='Display Samples', value=False, visible=False),#display_samples
         gr.Slider(minimum=1, maximum=25, step=1, label='Number of Batches', value=1, visible=True),#n_batch
         gr.Slider(minimum=1, maximum=4, step=1, label='Samples (keep on 1)', value=1),#n_samples
         gr.Slider(minimum=0, maximum=1.0, step=0.1, label='DDIM ETA', value=0.0),#ddim_eta
@@ -972,14 +974,69 @@ anim = gr.Interface(
         gr.Checkbox(label='Make Grid', value=False, visible=True),#make_grid
 
     ],
-    outputs=[
-        gr.Video(),
+        outputs=[
+          gr.Video(),
     ],
     title="Stable Diffusion Animation",
     description="",
 )
 
-demo = gr.TabbedInterface(interface_list=[anim], tab_names=["Anim"])
+batch = gr.Interface(
+    anim,
+    inputs=[
+        gr.Dropdown(label='Animation Mode', choices=["None"], value="None"),#animation_mode
+        gr.Textbox(label='Prompts',  placeholder="a beautiful forest by Asher Brown Durand, trending on Artstation\na beautiful city by Asher Brown Durand, trending on Artstation", lines=5),#animation_prompts
+        gr.Checkbox(label='KeyFrames', value=True, visible=False),#key_frames
+        gr.Textbox(label='Keyframes or Prompts for batch',  placeholder="0\n5 ", lines=5, value="0\n5", visible=False),#prompts
+        gr.Textbox(label='Batch Name',  placeholder="Batch_001", lines=1, value="SDAnim"),#batch_name
+        gr.Textbox(label='Output Dir',  placeholder="/content/", lines=1, value='/gdrive/MyDrive/sd_anims/'),#outdir
+        gr.Slider(minimum=1, maximum=1000, step=1, label='Frames to render', value=100, visible=False),#max_frames
+        gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512),#width
+        gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512),#height
+        gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100),#steps
+        gr.Slider(minimum=1, maximum=25, step=1, label='Scale', value=11),#scale
+        gr.Textbox(label='Angles',  placeholder="0:(0)", lines=1, value="0:(0)", visible=False),#angle
+        gr.Textbox(label='Zoom',  placeholder="0: (1.04)", lines=1, value="0:(1.04)", visible=False),#zoom
+        gr.Textbox(label='Translation X (+ is Camera Left, large values [1 - 50])',  placeholder="0: (0)", lines=1, value="0:(0)", visible=False),#translation_x
+        gr.Textbox(label='Translation Y',  placeholder="0: (0)", lines=1, value="0:(0)", visible=False),#translation_y
+        gr.Dropdown(label='Seed Behavior', choices=["iter", "fixed", "random"], value="iter", visible=False),#seed_behavior
+        gr.Number(label='Seed',  placeholder="SEED HERE", value='-1'),#seed
+        gr.Dropdown(label='Spline Interpolation', choices=["Linear", "Quadratic", "Cubic"], value="Linear", visible=False),#interp_spline
+        gr.Textbox(label='Noise Schedule',  placeholder="0:(0)", lines=1, value="0:(0.02)", visible=False),#noise_schedule
+        gr.Textbox(label='Strength_Schedule',  placeholder="0:(0)", lines=1, value="0:(0.65)", visible=False),#strength_schedule
+        gr.Textbox(label='Contrast Schedule',  placeholder="0:(0)", lines=1, value="0:(1.0)", visible=False),#contrast_schedule
+        gr.Radio(label='Sampler', choices=["klms","dpm2","dpm2_ancestral","heun","euler","euler_ancestral","plms", "ddim"], value="klms"),#sampler
+        gr.Slider(minimum=1, maximum=100, step=1, label='Extract n-th frame', value=1, visible=False),#extract_nth_frame
+        gr.Slider(minimum=1, maximum=25, step=1, label='Interpolate n frames', value=4, visible=False),#interpolate_x_frames
+        gr.Dropdown(label='Border', choices=["wrap", "replicate"], value="wrap", visible=False),#border
+        gr.Dropdown(label='Color Coherence', choices=['None', "Match Frame 0 HSV", "Match Frame 0 LAB", "Match Frame 0 RGB"], value="Match Frame 0 RGB", visible=False),#color_coherence
+        gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Noise', value=0.02, visible=False),#previous_frame_noise
+        gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Strength', value=0.4, visible=False),#previous_frame_strength
+        gr.Textbox(label='Video init path',  placeholder='/content/video_in.mp4', lines=1, visible=False),#video_init_path
+        gr.Checkbox(label='Save Grid', value=False, visible=True),#save_grid
+        gr.Checkbox(label='Save Settings', value=True, visible=True),#save_settings
+        gr.Checkbox(label='Save Samples', value=True, visible=True),#save_samples
+        gr.Checkbox(label='Display Samples', value=True, visible=False),#display_samples
+        gr.Slider(minimum=1, maximum=25, step=1, label='Number of Batches', value=1, visible=True),#n_batch
+        gr.Slider(minimum=1, maximum=4, step=1, label='Samples (keep on 1)', value=1),#n_samples
+        gr.Slider(minimum=0, maximum=1.0, step=0.1, label='DDIM ETA', value=0.0),#ddim_eta
+        gr.Checkbox(label='Use Init', value=False, visible=True),#use_init
+        gr.Textbox(label='Init Image link',  placeholder="https://cdn.pixabay.com/photo/2022/07/30/13/10/green-longhorn-beetle-7353749_1280.jpg", lines=1),#init_image
+        gr.Slider(minimum=0, maximum=1, step=0.1, label='Init Image Strength', value=0.5),#strength
+        gr.Textbox(label='Timestring',  placeholder="timestring", lines=1, value='', visible=False),#timestring
+        gr.Checkbox(label='Resume from Timestring', value=False, visible=False),#resume_from_timestring
+        gr.Textbox(label='Resume from:',  placeholder="20220829210106", lines=1, value="20220829210106", visible=False),#resume_timestring
+        gr.Checkbox(label='Make Grid', value=False, visible=True),#make_grid
+
+    ],
+        outputs=[
+          gr.Image(),
+    ],
+    title="Stable Diffusion Batch Prompts",
+    description="",
+)
+
+demo = gr.TabbedInterface(interface_list=[anim, batch], tab_names=["Anim", "BatchRender"])
 
 class ServerLauncher(threading.Thread):
     def __init__(self, demo):
