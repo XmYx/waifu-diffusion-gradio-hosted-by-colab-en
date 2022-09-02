@@ -466,7 +466,14 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
     results = []
 
     def render_animation(args):
-        print (args.prompts)
+        prom = args.animation_prompts
+        key = args.prompts
+
+        new_prom = list(prom.split("\n"))
+        new_key = list(key.split("\n"))
+
+        prompts = dict(zip(new_key, new_prom))
+        print (prompts)
         # animations use key framed prompts
         #args.prompts = animation_prompts
 
@@ -666,9 +673,9 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         return key_frame_series
 
     def render_image_batch(args):
-        args.prompts = prompts
+        #args.prompts = prompts
 
-
+        args.prompts = list(args.animation_prompts.split("\n"))
         # create output folder for the batch
         os.makedirs(args.outdir, exist_ok=True)
         if args.save_settings or args.save_samples:
@@ -704,7 +711,7 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         clear_between_batches = args.n_batch >= 32
 
         for iprompt, prompt in enumerate(prompts):
-            args.prompt = prompt
+            args.prompt = args.prompts[iprompt]
 
 
 
@@ -715,6 +722,7 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 
                 for image in init_array: # iterates the init images
                     args.init_image = image
+
                     results = generate(args)
                     for image in results:
                         #all_images.append(results[image])
@@ -873,16 +881,10 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         args.init_c = None
 
 
-    if animation_mode == '2D':
-        prom = animation_prompts
-        key = prompts
 
-        new_prom = list(prom.split("\n"))
-        new_key = list(key.split("\n"))
-
-        prompts = dict(zip(new_key, new_prom))
     #animation_prompts = dict(zip(new_key, new_prom))
     print (prompts)
+    print (animation_prompts)
     #animation_mode = animation_mode
     arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid)
     args = SimpleNamespace(**arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid))
