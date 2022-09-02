@@ -28,6 +28,7 @@ from torch import autocast
 import subprocess
 from base64 import b64encode
 import gradio as gr
+from gfpgan import GFPGANer
 
 
 parser = argparse.ArgumentParser()
@@ -108,6 +109,42 @@ def crash(e, s):
     print('exiting...calling os._exit(0)')
     t = threading.Timer(0.25, os._exit, args=[0])
     t.start()
+
+
+def FACE_RESTORATION(image, bg_upsampling, upscale):
+    from basicsr.archs.rrdbnet_arch import RRDBNet
+    from realesrgan import RealESRGANer
+    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
+    bg_upsampler = RealESRGANer(
+        scale=2,
+        model_path='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth',
+        model=model,
+        tile=400,
+        tile_pad=10,
+        pre_pad=0,
+        half=True)
+    arch = 'clean'
+    channel_multiplier = 2
+    model_name = 'GFPGANv1.3'
+    model_path = '/content/stable-diffusion-colab/src/gfpgan/experiments/pretrained_models/GFPGANv1.3.pth'
+    restorer = GFPGANer(
+        model_path=model_path,
+        upscale=1,
+        arch=arch,
+        channel_multiplier=channel_multiplier,
+        bg_upsampler=None
+        )
+
+    image=np.array(image)
+    input_img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+    cropped_faces, restored_faces, restored_img = restorer.enhance(
+            input_img, has_aligned=False, only_center_face=False, paste_back=True)
+
+    image = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
+    image = bg_upsampler.enhance(image, outscale=upscale)[0]
+    return image
+
 
 class CFGDenoiser(nn.Module):
     def __init__(self, model):
@@ -334,7 +371,7 @@ if load_on_run_all and ckpt_valid:
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
 
-def arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid):
+def arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale):
     precision = 'autocast'
     fixed_code = True
     C = 4
@@ -455,13 +492,23 @@ def generate(args, return_latent=False, return_sample=False, return_c=False):
                     for x_sample in x_samples:
                         x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                         image = Image.fromarray(x_sample.astype(np.uint8))
+
+                        if args.GFPGAN:
+                            image = FACE_RESTORATION(image, args.bg_upsampling, args.upscale).astype(np.uint8)
+                            image = Image.fromarray(image)
+                        else:
+                            image = image
                         results.append(image)
+
+#save(pt, format = 'JPEG', optimize = True)
+#Image.fromarray(FACE_RESTORATION(output_images[i][k], bg_upsampling, upscale, GFPGANth).astype(np.uint8))
+
     torch_gc()
     return results
 
 
 
-def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool):
+def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, GFPGAN: bool, bg_upsampling: bool, upscale: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool):
     images = []
     results = []
 
@@ -889,8 +936,8 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
     print (prompts)
     print (animation_prompts)
     #animation_mode = animation_mode
-    arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid)
-    args = SimpleNamespace(**arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid))
+    arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale)
+    args = SimpleNamespace(**arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale))
     args.outputs = []
     if args.animation_mode == 'None':
         args.max_frames = 1
@@ -950,6 +997,9 @@ anim_if = gr.Interface(
         gr.Textbox(label='Batch Name',  placeholder="Batch_001", lines=1, value="SDAnim"),#batch_name
         gr.Textbox(label='Output Dir',  placeholder="/content/", lines=1, value='/gdrive/MyDrive/sd_anims/'),#outdir
         gr.Slider(minimum=1, maximum=1000, step=1, label='Frames to render', value=100),#max_frames
+        gr.Checkbox(label='GFPGAN, Face Resto, Upscale', value=False),
+        gr.Checkbox(label='BG Enhancement', value=False),
+        gr.Slider(minimum=1, maximum=8, step=1, label="Upscaler, 1 to turn off", value=1),
         gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512),#width
         gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512),#height
         gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100),#steps
@@ -1005,6 +1055,9 @@ batch = gr.Interface(
         gr.Textbox(label='Batch Name',  placeholder="Batch_001", lines=1, value="SDAnim"),#batch_name
         gr.Textbox(label='Output Dir',  placeholder="/content/", lines=1, value='/gdrive/MyDrive/sd_anims/'),#outdir
         gr.Slider(minimum=1, maximum=1000, step=1, label='Frames to render', value=100, visible=False),#max_frames
+        gr.Checkbox(label='GFPGAN, Face Resto, Upscale', value=False),
+        gr.Checkbox(label='BG Enhancement', value=False),
+        gr.Slider(minimum=1, maximum=8, step=1, label="Upscaler, 1 to turn off", value=1),
         gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512),#width
         gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512),#height
         gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100),#steps
