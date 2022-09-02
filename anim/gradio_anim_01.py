@@ -21,7 +21,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 from pytorch_lightning import seed_everything
 from skimage.exposure import match_histograms
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid as mkgrid
 from tqdm import tqdm, trange
 from types import SimpleNamespace
 from torch import autocast
@@ -773,8 +773,8 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
                     results = generate(args)
                     for image in results:
                         #all_images.append(results[image])
-                        #if args.make_grid:
-                        #    all_images.append(T.functional.pil_to_tensor(image))
+                        if args.make_grid:
+                            all_images.append(T.functional.pil_to_tensor(image))
                         if args.save_samples:
                             print(f"Filename: {args.timestring}_{index:05}_{args.seed}.png")
                             print(f"{args.outdir}/{args.timestring}_{index:05}_{args.seed}.png")
@@ -791,13 +791,13 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
             #print(len(all_images))
             if args.make_grid:
 
-                grid = make_grid(all_images, nrow=int(len(all_images)/2))
+                grid = mkgrid(all_images, nrow=int(len(all_images)/2))
                 grid = rearrange(grid, 'c h w -> h w c').cpu().numpy()
                 filename = f"{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
                 grid_image = Image.fromarray(grid.astype(np.uint8))
                 grid_image.save(os.path.join(args.outdir, filename))
-                fpath = f"{args.outdir}/{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
-                args.outputs.append(fpath)
+                gpath = f"{args.outdir}/{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
+                args.outputs.append(gpath)
             #    display.clear_output(wait=True)
             #    display.display(grid_image)
 
@@ -1066,7 +1066,7 @@ batch = gr.Interface(
         gr.Textbox(label='Zoom',  placeholder="0: (1.04)", lines=1, value="0:(1.04)", visible=False),#zoom
         gr.Textbox(label='Translation X (+ is Camera Left, large values [1 - 50])',  placeholder="0: (0)", lines=1, value="0:(0)", visible=False),#translation_x
         gr.Textbox(label='Translation Y',  placeholder="0: (0)", lines=1, value="0:(0)", visible=False),#translation_y
-        gr.Dropdown(label='Seed Behavior', choices=["iter", "fixed", "random"], value="iter", visible=False),#seed_behavior
+        gr.Dropdown(label='Seed Behavior', choices=["iter", "fixed", "random"], value="iter", visible=True),#seed_behavior
         gr.Number(label='Seed',  placeholder="SEED HERE", value='-1'),#seed
         gr.Dropdown(label='Spline Interpolation', choices=["Linear", "Quadratic", "Cubic"], value="Linear", visible=False),#interp_spline
         gr.Textbox(label='Noise Schedule',  placeholder="0:(0)", lines=1, value="0:(0.02)", visible=False),#noise_schedule
