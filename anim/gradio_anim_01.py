@@ -789,15 +789,15 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
                     args.seed = next_seed(args)
 
             #print(len(all_images))
-            if args.make_grid:
-
-                grid = mkgrid(all_images, nrow=int(len(all_images)/2))
-                grid = rearrange(grid, 'c h w -> h w c').cpu().numpy()
-                filename = f"{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
-                grid_image = Image.fromarray(grid.astype(np.uint8))
-                grid_image.save(os.path.join(args.outdir, filename))
-                gpath = f"{args.outdir}/{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
-                args.outputs.append(gpath)
+        if args.make_grid:
+            args.grid_rows = 2
+            grid = mkgrid(all_images, nrow=int(len(all_images)/args.grid_rows))
+            grid = rearrange(grid, 'c h w -> h w c').cpu().numpy()
+            filename = f"{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
+            grid_image = Image.fromarray(grid.astype(np.uint8))
+            grid_image.save(os.path.join(args.outdir, filename))
+            gpath = f"{args.outdir}/{args.timestring}_{iprompt:05d}_grid_{args.seed}.png"
+            args.outputs.append(gpath)
             #    display.clear_output(wait=True)
             #    display.display(grid_image)
 
