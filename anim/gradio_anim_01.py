@@ -330,7 +330,7 @@ ckpt_config_path = custom_config_path if model_config == "custom" else os.path.j
 if os.path.exists(ckpt_config_path):
     print(f"{ckpt_config_path} exists")
 else:
-    ckpt_config_path = "/content/sdtest/stable-diffusion/configs/stable-diffusion/v1-inference.yaml"
+    ckpt_config_path = "/content/stable-diffusion/configs/stable-diffusion/v1-inference.yaml"
 print(f"Using config: {ckpt_config_path}")
 
 # checkpoint path or download
