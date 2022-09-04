@@ -11,3 +11,5 @@ streamlit_001
 streamlit_001.py
 anim_webui_blocks.py
 test2.py
+anim/gradio_anim_test.py
+anim/gradio_anim_test_inpaint.py
