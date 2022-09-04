@@ -24,6 +24,7 @@ import gradio as gr
 from gfpgan import GFPGANer
 
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, help="choose which GPU to use if you have multiple", default=0)
 parser.add_argument("--cli", type=str, help="don't launch web server, take Python function kwargs from this file.", default=None)
@@ -39,7 +40,6 @@ sys.path.extend([
     '/content/MiDaS',
 ])
 
-
 import py3d_tools as p3d
 from helpers import save_samples, sampler_fn
 from infer import InferenceHelper
@@ -50,14 +50,12 @@ from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
 from midas.dpt_depth import DPTDepthModel
 from midas.transforms import Resize, NormalizeImage, PrepareForNet
-
-
 models_path = "/gdrive/MyDrive/" #@param {type:"string"}
 output_path = "/content/output" #@param {type:"string"}
 
-#@markdown **Google Drive Path Variables (Optional)**
-mount_google_drive = False #@param {type:"boolean"}
-force_remount = False
+mount_google_drive = False #@param {type:"boolean"}Will Remove
+force_remount = False #Will Remove
+
 class MemUsageMonitor(threading.Thread):
     stop_flag = False
     max_usage = 0
@@ -94,7 +92,6 @@ class MemUsageMonitor(threading.Thread):
         self.stop_flag = True
         return self.max_usage, self.total
 
-
 def sanitize(prompt):
     whitelist = set('abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ')
     tmp = ''.join(filter(whitelist.__contains__, prompt))
@@ -128,6 +125,100 @@ def crash(e, s):
     t = threading.Timer(0.25, os._exit, args=[0])
     t.start()
 
+def load_model_from_config(config, ckpt, verbose=False, device='cuda', half_precision=True):
+    map_location = "cuda" #@param ["cpu", "cuda"]
+    print(f"Loading model from {ckpt}")
+    pl_sd = torch.load(ckpt, map_location=map_location)
+    if "global_step" in pl_sd:
+        print(f"Global Step: {pl_sd['global_step']}")
+    sd = pl_sd["state_dict"]
+    model = instantiate_from_config(config.model)
+    m, u = model.load_state_dict(sd, strict=False)
+    if len(m) > 0 and verbose:
+        print("missing args:")
+        print(m)
+    if len(u) > 0 and verbose:
+        print("unexpected keys:")
+        print(u)
+
+    if half_precision:
+        model = model.half().to(device)
+    else:
+        model = model.to(device)
+    model.eval()
+    return model
+
+model_config = "v1-inference.yaml" #@param ["custom","v1-inference.yaml"]
+model_checkpoint =  "model.ckpt" #@param ["custom","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt"]
+custom_config_path = "" #@param {type:"string"}
+custom_checkpoint_path = "" #@param {type:"string"}
+check_sha256 = False #@param {type:"boolean"}
+load_on_run_all = True #@param {type: 'boolean'}
+half_precision = True # needs to be fixed
+model_map = {
+    "sd-v1-4-full-ema.ckpt": {'sha256': '14749efc0ae8ef0329391ad4436feb781b402f4fece4883c7ad8d10556d8a36a'},
+    "sd-v1-4.ckpt": {'sha256': 'fe4efff1e174c627256e44ec2991ba279b3816e364b49f9be2abc0b3ff3f8556'},
+    "sd-v1-3-full-ema.ckpt": {'sha256': '54632c6e8a36eecae65e36cb0595fab314e1a1545a65209f24fde221a8d4b2ca'},
+    "sd-v1-3.ckpt": {'sha256': '2cff93af4dcc07c3e03110205988ff98481e86539c51a8098d4f2236e41f7f2f'},
+    "sd-v1-2-full-ema.ckpt": {'sha256': 'bc5086a904d7b9d13d2a7bccf38f089824755be7261c7399d92e555e1e9ac69a'},
+    "sd-v1-2.ckpt": {'sha256': '3b87d30facd5bafca1cbed71cfb86648aad75d1c264663c0cc78c7aea8daec0d'},
+    "sd-v1-1-full-ema.ckpt": {'sha256': 'efdeb5dc418a025d9a8cc0a8617e106c69044bc2925abecc8a254b2910d69829'},
+    "sd-v1-1.ckpt": {'sha256': '86cd1d3ccb044d7ba8db743d717c9bac603c4043508ad2571383f954390f3cea'}
+}
+
+# config path
+ckpt_config_path = custom_config_path if model_config == "custom" else os.path.join(models_path, model_config)
+if os.path.exists(ckpt_config_path):
+    print(f"{ckpt_config_path} exists")
+else:
+    ckpt_config_path = "/content/stable-diffusion/configs/stable-diffusion/v1-inference.yaml"
+print(f"Using config: {ckpt_config_path}")
+
+# checkpoint path or download
+ckpt_path = custom_checkpoint_path if model_checkpoint == "custom" else os.path.join(models_path, model_checkpoint)
+ckpt_valid = True
+if os.path.exists(ckpt_path):
+    print(f"{ckpt_path} exists")
+else:
+    print(f"Please download model checkpoint and place in {os.path.join(models_path, model_checkpoint)}")
+    ckpt_valid = False
+
+if check_sha256 and model_checkpoint != "custom" and ckpt_valid:
+    import hashlib
+    print("\n...checking sha256")
+    with open(ckpt_path, "rb") as f:
+        bytes = f.read()
+        hash = hashlib.sha256(bytes).hexdigest()
+        del bytes
+    if model_map[model_checkpoint]["sha256"] == hash:
+        print("hash is correct\n")
+    else:
+        print("hash in not correct\n")
+        ckpt_valid = False
+
+if ckpt_valid:
+    print(f"Using ckpt: {ckpt_path}")
+
+if load_on_run_all and ckpt_valid:
+    local_config = OmegaConf.load(f"{ckpt_config_path}")
+    model = load_model_from_config(local_config, f"{ckpt_path}",half_precision=half_precision)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model = model.to(device)
+
+def arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode, init_img_array, use_mask, mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust):
+
+    precision = 'autocast'
+    fixed_code = True
+    C = 4
+    f = 8
+    dynamic_threshold = None
+    static_threshold = None
+    prompt = ""
+    timestring = ""
+    init_latent = None
+    init_sample = None
+    init_c = None
+    return locals()
 
 def FACE_RESTORATION(image, bg_upsampling, upscale):
     from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -197,6 +288,46 @@ def load_img(path, shape):
     image = torch.from_numpy(image)
     return 2.*image - 1.
 
+def load_mask_img(path, shape):
+    # path (str): Path to the mask image
+    # shape (list-like len(4)): shape of the image to match, usually latent_image.shape
+    mask_w_h = (shape[-1], shape[-2])
+    if path.startswith('http://') or path.startswith('https://'):
+        mask_image = Image.open(requests.get(path, stream=True).raw).convert('RGBA')
+    else:
+        mask_image = Image.open(path).convert('RGBA')
+    mask = mask_image.resize(mask_w_h, resample=Image.LANCZOS)
+    mask = mask.convert("L")
+    return mask
+
+def prepare_mask(mask_file, mask_shape, invert_mask, mask_brightness_adjust, mask_contrast_adjust):
+    # path (str): Path to the mask image
+    # shape (list-like len(4)): shape of the image to match, usually latent_image.shape
+    # mask_brightness_adjust (non-negative float): amount to adjust brightness of the iamge,
+    #     0 is black, 1 is no adjustment, >1 is brighter
+    # mask_contrast_adjust (non-negative float): amount to adjust contrast of the image,
+    #     0 is a flat grey image, 1 is no adjustment, >1 is more contrast
+
+    mask = load_mask_img(mask_file, mask_shape)
+
+    # Mask brightness/contrast adjustments
+    if mask_brightness_adjust != 1:
+        mask = TF.adjust_brightness(mask, mask_brightness_adjust)
+    if mask_contrast_adjust != 1:
+        mask = TF.adjust_contrast(mask, mask_contrast_adjust)
+
+    # Mask image to array
+    mask = np.array(mask).astype(np.float32) / 255.0
+    mask = np.tile(mask,(4,1,1))
+    mask = np.expand_dims(mask,axis=0)
+    mask = torch.from_numpy(mask)
+
+    if invert_mask:
+        mask = ( (mask - 0.5) * -1) + 0.5
+
+    mask = np.clip(mask,0,1)
+    return mask
+
 def maintain_colors(prev_img, color_match_sample, mode):
     if mode == 'Match Frame 0 RGB':
         return match_histograms(prev_img, color_match_sample, multichannel=True)
@@ -211,9 +342,9 @@ def maintain_colors(prev_img, color_match_sample, mode):
         matched_lab = match_histograms(prev_img_lab, color_match_lab, multichannel=True)
         return cv2.cvtColor(matched_lab, cv2.COLOR_LAB2RGB)
 
-def make_callback(sampler, dynamic_threshold=None, static_threshold=None):
+def make_callback(sampler_name, dynamic_threshold=None, static_threshold=None, mask=None, init_latent=None, sigmas=None, sampler=None, masked_noise_modifier=1.0):
     # Creates the callback function to be passed into the samplers
-    # The callback function is applied to the image after each step
+    # The callback function is applied to the image at each step
     def dynamic_thresholding_(img, threshold):
         # Dynamic thresholding from Imagen paper (May 2022)
         s = np.percentile(np.abs(img.cpu()), threshold, axis=tuple(range(1,img.ndim)))
@@ -223,29 +354,50 @@ def make_callback(sampler, dynamic_threshold=None, static_threshold=None):
 
     # Callback for samplers in the k-diffusion repo, called thus:
     #   callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
-    def k_callback(args_dict):
-        if static_threshold is not None:
-            torch.clamp_(args_dict['x'], -1*static_threshold, static_threshold)
+    def k_callback_(args_dict):
         if dynamic_threshold is not None:
             dynamic_thresholding_(args_dict['x'], dynamic_threshold)
+        if static_threshold is not None:
+            torch.clamp_(args_dict['x'], -1*static_threshold, static_threshold)
+        if mask is not None:
+            init_noise = init_latent + noise * args_dict['sigma']
+            is_masked = torch.logical_and(mask >= mask_schedule[args_dict['i']], mask != 0 )
+            new_img = init_noise * torch.where(is_masked,1,0) + args_dict['x'] * torch.where(is_masked,0,1)
+            args_dict['x'].copy_(new_img)
 
     # Function that is called on the image (img) and step (i) at each step
-    def img_callback(img, i):
+    def img_callback_(img, i):
         # Thresholding functions
         if dynamic_threshold is not None:
             dynamic_thresholding_(img, dynamic_threshold)
         if static_threshold is not None:
             torch.clamp_(img, -1*static_threshold, static_threshold)
+        if mask is not None:
+            i_inv = len(sigmas) - i - 1
+            init_noise = sampler.stochastic_encode(init_latent, torch.tensor([i_inv]*batch_size).to(device), noise=noise)
+            is_masked = torch.logical_and(mask >= mask_schedule[i], mask != 0 )
+            new_img = init_noise * torch.where(is_masked,1,0) + img * torch.where(is_masked,0,1)
+            img.copy_(new_img)
 
-    if sampler in ["plms","ddim"]:
+
+    if init_latent is not None:
+        noise = torch.randn_like(init_latent, device=device) * masked_noise_modifier
+    if sigmas is not None and len(sigmas) > 0:
+        mask_schedule, _ = torch.sort(sigmas/torch.max(sigmas))
+    elif len(sigmas) == 0:
+        mask = None # no mask needed if no steps (usually happens because strength==1.0)
+    if sampler_name in ["plms","ddim"]:
         # Callback function formated for compvis latent diffusion samplers
-        callback = img_callback
+        if mask is not None:
+            assert sampler is not None, "Callback function for stable-diffusion samplers requires sampler variable"
+            batch_size = init_latent.shape[0]
+
+        callback = img_callback_
     else:
         # Default callback function uses k-diffusion sampler variables
-        callback = k_callback
+        callback = k_callback_
 
     return callback
-
 
 def sample_from_cv2(sample: np.ndarray) -> torch.Tensor:
     sample = ((sample.astype(float) / 255.0) * 2) - 1
@@ -303,105 +455,6 @@ def makevideo(args):
         #mp4 = open(mp4_path,'rb').read()
         #data_url = "data:video/mp4;base64," + b64encode(mp4).decode()
         #display.display( display.HTML(f'<video controls loop><source src="{data_url}" type="video/mp4"></video>') )
-
-model_config = "v1-inference.yaml" #@param ["custom","v1-inference.yaml"]
-model_checkpoint =  "model.ckpt" #@param ["custom","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt"]
-custom_config_path = "" #@param {type:"string"}
-custom_checkpoint_path = "" #@param {type:"string"}
-
-check_sha256 = False #@param {type:"boolean"}
-
-load_on_run_all = True #@param {type: 'boolean'}
-half_precision = True # needs to be fixed
-
-model_map = {
-    "sd-v1-4-full-ema.ckpt": {'sha256': '14749efc0ae8ef0329391ad4436feb781b402f4fece4883c7ad8d10556d8a36a'},
-    "sd-v1-4.ckpt": {'sha256': 'fe4efff1e174c627256e44ec2991ba279b3816e364b49f9be2abc0b3ff3f8556'},
-    "sd-v1-3-full-ema.ckpt": {'sha256': '54632c6e8a36eecae65e36cb0595fab314e1a1545a65209f24fde221a8d4b2ca'},
-    "sd-v1-3.ckpt": {'sha256': '2cff93af4dcc07c3e03110205988ff98481e86539c51a8098d4f2236e41f7f2f'},
-    "sd-v1-2-full-ema.ckpt": {'sha256': 'bc5086a904d7b9d13d2a7bccf38f089824755be7261c7399d92e555e1e9ac69a'},
-    "sd-v1-2.ckpt": {'sha256': '3b87d30facd5bafca1cbed71cfb86648aad75d1c264663c0cc78c7aea8daec0d'},
-    "sd-v1-1-full-ema.ckpt": {'sha256': 'efdeb5dc418a025d9a8cc0a8617e106c69044bc2925abecc8a254b2910d69829'},
-    "sd-v1-1.ckpt": {'sha256': '86cd1d3ccb044d7ba8db743d717c9bac603c4043508ad2571383f954390f3cea'}
-}
-
-# config path
-ckpt_config_path = custom_config_path if model_config == "custom" else os.path.join(models_path, model_config)
-if os.path.exists(ckpt_config_path):
-    print(f"{ckpt_config_path} exists")
-else:
-    ckpt_config_path = "/content/stable-diffusion/configs/stable-diffusion/v1-inference.yaml"
-print(f"Using config: {ckpt_config_path}")
-
-# checkpoint path or download
-ckpt_path = custom_checkpoint_path if model_checkpoint == "custom" else os.path.join(models_path, model_checkpoint)
-ckpt_valid = True
-if os.path.exists(ckpt_path):
-    print(f"{ckpt_path} exists")
-else:
-    print(f"Please download model checkpoint and place in {os.path.join(models_path, model_checkpoint)}")
-    ckpt_valid = False
-
-if check_sha256 and model_checkpoint != "custom" and ckpt_valid:
-    import hashlib
-    print("\n...checking sha256")
-    with open(ckpt_path, "rb") as f:
-        bytes = f.read()
-        hash = hashlib.sha256(bytes).hexdigest()
-        del bytes
-    if model_map[model_checkpoint]["sha256"] == hash:
-        print("hash is correct\n")
-    else:
-        print("hash in not correct\n")
-        ckpt_valid = False
-
-if ckpt_valid:
-    print(f"Using ckpt: {ckpt_path}")
-
-def load_model_from_config(config, ckpt, verbose=False, device='cuda', half_precision=True):
-    map_location = "cuda" #@param ["cpu", "cuda"]
-    print(f"Loading model from {ckpt}")
-    pl_sd = torch.load(ckpt, map_location=map_location)
-    if "global_step" in pl_sd:
-        print(f"Global Step: {pl_sd['global_step']}")
-    sd = pl_sd["state_dict"]
-    model = instantiate_from_config(config.model)
-    m, u = model.load_state_dict(sd, strict=False)
-    if len(m) > 0 and verbose:
-        print("missing args:")
-        print(m)
-    if len(u) > 0 and verbose:
-        print("unexpected keys:")
-        print(u)
-
-    if half_precision:
-        model = model.half().to(device)
-    else:
-        model = model.to(device)
-    model.eval()
-    return model
-
-if load_on_run_all and ckpt_valid:
-    local_config = OmegaConf.load(f"{ckpt_config_path}")
-    model = load_model_from_config(local_config, f"{ckpt_path}",half_precision=half_precision)
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    model = model.to(device)
-
-def arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode):
-
-    precision = 'autocast'
-    fixed_code = True
-    C = 4
-    f = 8
-    dynamic_threshold = None
-    static_threshold = None
-    prompt = ""
-    timestring = ""
-    init_latent = None
-    init_sample = None
-    init_c = None
-    return locals()
-
 
 def transform_image_3d(prev_img_cv2, adabins_helper, midas_model, midas_transform, rot_mat, translate, args):
     # adapted and optimized version of transform_image_3d from Disco Diffusion https://github.com/alembics/disco-diffusion
@@ -519,6 +572,7 @@ def transform_image_3d(prev_img_cv2, adabins_helper, midas_model, midas_transfor
     ).cpu().numpy().astype(np.uint8)
     return result
 
+'''
 def generate(args, return_latent=False, return_sample=False, return_c=False):
 
 
@@ -640,15 +694,146 @@ def generate(args, return_latent=False, return_sample=False, return_c=False):
 
     torch_gc()
     return results
+'''
 
+def generate(args, return_latent=False, return_sample=False, return_c=False):
+    seed_everything(args.seed)
+    os.makedirs(args.outdir, exist_ok=True)
 
+    if args.sampler == 'plms':
+        sampler = PLMSSampler(model)
+    else:
+        sampler = DDIMSampler(model)
 
+    model_wrap = CompVisDenoiser(model)
+    batch_size = args.n_samples
+    prompt = args.prompt
+    assert prompt is not None
+    data = [batch_size * [prompt]]
 
+    init_latent = None
+    if args.init_latent is not None:
+        init_latent = args.init_latent
+    elif args.init_sample is not None:
+        init_latent = model.get_first_stage_encoding(model.encode_first_stage(args.init_sample))
+    elif args.use_init and args.init_image != None and args.init_image != '':
+        init_image = load_img(args.init_image, shape=(args.W, args.H)).to(device)
+        init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
+        init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
 
-def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, GFPGAN: bool, bg_upsampling: bool, upscale: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, translation_z: str, rotation_3d_x: str, rotation_3d_y: str, rotation_3d_z: str, use_depth_warping: bool, midas_weight: float, near_plane: int, far_plane: int, fov: int, padding_mode: str, sampling_mode: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool):
+    if not args.use_init and args.strength > 0:
+        print("\nNo init image, but strength > 0. This may give you some strange results.\n")
+
+    # Mask functions
+    mask = None
+    if args.use_mask:
+        assert args.mask_file is not None, "use_mask==True: An mask image is required for a mask"
+        assert args.use_init, "use_mask==True: use_init is required for a mask"
+        assert init_latent is not None, "use_mask==True: An latent init image is required for a mask"
+
+        mask = prepare_mask(args.mask_file,
+                            init_latent.shape,
+                            args.mask_contrast_adjust,
+                            args.mask_brightness_adjust,
+                            args.invert_mask)
+
+        mask = mask.to(device)
+        mask = repeat(mask, '1 ... -> b ...', b=batch_size)
+
+    t_enc = int((1.0-args.strength) * args.steps)
+
+    # Noise schedule for the k-diffusion samplers (used for masking)
+    k_sigmas = model_wrap.get_sigmas(args.steps)
+    k_sigmas = k_sigmas[len(k_sigmas)-t_enc-1:]
+
+    if args.sampler in ['plms','ddim']:
+        sampler.make_schedule(ddim_num_steps=args.steps, ddim_eta=args.ddim_eta, ddim_discretize='fill', verbose=False)
+
+    callback = make_callback(sampler_name=args.sampler,
+                            dynamic_threshold=args.dynamic_threshold,
+                            static_threshold=args.static_threshold,
+                            mask=mask,
+                            init_latent=init_latent,
+                            sigmas=k_sigmas,
+                            sampler=sampler)
+
+    results = []
+    precision_scope = autocast if args.precision == "autocast" else nullcontext
+    with torch.no_grad():
+        with precision_scope("cuda"):
+            with model.ema_scope():
+                for prompts in data:
+                    uc = None
+                    if args.scale != 1.0:
+                        uc = model.get_learned_conditioning(batch_size * [""])
+                    if isinstance(prompts, tuple):
+                        prompts = list(prompts)
+                    c = model.get_learned_conditioning(prompts)
+
+                    if args.init_c != None:
+                        c = args.init_c
+
+                    if args.sampler in ["klms","dpm2","dpm2_ancestral","heun","euler","euler_ancestral"]:
+                        samples = sampler_fn(
+                            c=c,
+                            uc=uc,
+                            args=args,
+                            model_wrap=model_wrap,
+                            init_latent=init_latent,
+                            t_enc=t_enc,
+                            device=device,
+                            cb=callback)
+                    else:
+                        # args.sampler == 'plms' or args.sampler == 'ddim':
+                        if init_latent is not None and args.strength > 0:
+                            z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
+                        else:
+                            z_enc = torch.randn([args.n_samples, args.C, args.H // args.f, args.W // args.f], device=device)
+                        if args.sampler == 'ddim':
+                            samples = sampler.decode(z_enc,
+                                                     c,
+                                                     t_enc,
+                                                     unconditional_guidance_scale=args.scale,
+                                                     unconditional_conditioning=uc,
+                                                     img_callback=callback)
+                        elif args.sampler == 'plms': # no "decode" function in plms, so use "sample"
+                            shape = [args.C, args.H // args.f, args.W // args.f]
+                            samples, _ = sampler.sample(S=args.steps,
+                                                            conditioning=c,
+                                                            batch_size=args.n_samples,
+                                                            shape=shape,
+                                                            verbose=False,
+                                                            unconditional_guidance_scale=args.scale,
+                                                            unconditional_conditioning=uc,
+                                                            eta=args.ddim_eta,
+                                                            x_T=z_enc,
+                                                            img_callback=callback)
+                        else:
+                            raise Exception(f"Sampler {args.sampler} not recognised.")
+
+                    if return_latent:
+                        results.append(samples.clone())
+
+                    x_samples = model.decode_first_stage(samples)
+                    if return_sample:
+                        results.append(x_samples.clone())
+
+                    x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
+
+                    if return_c:
+                        results.append(c.clone())
+
+                    for x_sample in x_samples:
+                        x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                        image = Image.fromarray(x_sample.astype(np.uint8))
+                        results.append(image)
+    return results
+
+def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, GFPGAN: bool, bg_upsampling: bool, upscale: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, translation_z: str, rotation_3d_x: str, rotation_3d_y: str, rotation_3d_z: str, use_depth_warping: bool, midas_weight: float, near_plane: int, far_plane: int, fov: int, padding_mode: str, sampling_mode: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool, init_img_array, use_mask, mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust):
+
     images = []
     results = []
-
+    print(f'This should be None when no mask is in cache: {init_img_array}')
     def load_depth_model(optimize=True):
         midas_model = DPTDepthModel(
             path=f"/content/models/dpt_large-midas-2f21e586.pt",
@@ -682,8 +867,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         args.mtransform = midas_transform
 
         return midas_model, midas_transform
-
-
 
     def anim_frame_warp_2d(prev_img_cv2, args, frame_idx):
         angle = args.angle_series[frame_idx]
@@ -721,7 +904,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         result = transform_image_3d(prev_img_cv2, adabins_helper, midas_model, args.mtransform, rot_mat, translate_xyz, args)
         torch.cuda.empty_cache()
         return result
-
 
     def DeformAnimKeys(args):
         args.angle_series = get_inbetweens(parse_key_frames(args.angle))
@@ -769,9 +951,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         if integer:
             return key_frame_series.astype(int)
         return key_frame_series
-
-
-
 
     def render_animation(args):
         prom = args.animation_prompts
@@ -913,7 +1092,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 
             args.seed = next_seed(args)
 
-
     def next_seed(args):
         if args.seed_behavior == 'iter':
             args.seed += 1
@@ -956,15 +1134,24 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
             print(f"Saving to {os.path.join(args.outdir, args.timestring)}_*")
 
         # save settings for the batch
-        if args.save_settings:
-            filename = os.path.join(args.outdir, f"{args.timestring}_settings.txt")
-            with open(filename, "w+", encoding="utf-8") as f:
-                json.dump(dict(args.__dict__), f, ensure_ascii=False, indent=4)
+        #if args.save_settings:
+        #    filename = os.path.join(args.outdir, f"{args.timestring}_settings.txt")
+        #    with open(filename, "w+", encoding="utf-8") as f:
+        #        json.dump(dict(args.__dict__), f, ensure_ascii=False, indent=4)
 
         index = 0
         all_images = []
         # function for init image batching
         init_array = []
+
+        if args.init_img_array != None:
+            initdir = f'{args.outdir}/init'
+            os.makedirs(initdir, exist_ok=True)
+            args.init_image = f'{args.outdir}/init/init.png'
+            args.mask_file = f'{args.outdir}/init/mask.png'
+            args.init_img_array['image'].save(os.path.join(args.outdir, args.init_image))
+            args.init_img_array['mask'].save(os.path.join(args.outdir, args.mask_file))
+
         if args.use_init:
             if args.init_image == "":
                 raise FileNotFoundError("No path was given for init_image")
@@ -1163,9 +1350,10 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
     print (prompts)
     print (animation_prompts)
     #animation_mode = animation_mode
-    arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode)
-    args = SimpleNamespace(**arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode))
+    arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode, init_img_array, use_mask, mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust)
+    args = SimpleNamespace(**arger(animation_prompts, prompts, animation_mode, strength, max_frames, border, key_frames, interp_spline, angle, zoom, translation_x, translation_y, translation_z, color_coherence, previous_frame_noise, previous_frame_strength, video_init_path, extract_nth_frame, interpolate_x_frames, batch_name, outdir, save_grid, save_settings, save_samples, display_samples, n_samples, W, H, init_image, seed, sampler, steps, scale, ddim_eta, seed_behavior, n_batch, use_init, timestring, noise_schedule, strength_schedule, contrast_schedule, resume_from_timestring, resume_timestring, make_grid, GFPGAN, bg_upsampling, upscale, rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping, midas_weight, near_plane, far_plane, fov, padding_mode, sampling_mode, init_img_array, use_mask, mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust))
     args.outputs = []
+    print('InPaint arg: {init_img_array}')
     if args.animation_mode == 'None':
         args.max_frames = 1
 
@@ -1211,7 +1399,13 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         render_image_batch(args)
         return args.outputs
 
+def refresh(choice):
+    print(choice)
+    #choice = None
+    return choice
 
+
+inPaint=None
 
 demo = gr.Blocks()
 
@@ -1221,7 +1415,7 @@ with demo:
             with gr.Row():
                 with gr.Column(scale=1):
                     batch_name = gr.Textbox(label='Batch Name',  placeholder='Batch_001', lines=1, value='SDAnim', interactive=True)#batch_name
-                    outdir = gr.Textbox(label='Output Dir',  placeholder='/content/', lines=1, value='/gdrive/MyDrive/sd_anims/', interactive=True)#outdir
+                    outdir = gr.Textbox(label='Output Dir',  placeholder='/content', lines=1, value='/gdrive/MyDrive/sd_anims', interactive=True)#outdir
                     animation_prompts = gr.Textbox(label='Prompts - divided by enter',
                                                     placeholder='a beautiful forest by Asher Brown Durand, trending on Artstation\na beautiful city by Asher Brown Durand, trending on Artstation',
                                                     lines=5, interactive=True)#animation_prompts
@@ -1266,7 +1460,7 @@ with demo:
                       with gr.Row():
                           GFPGAN = gr.Checkbox(label='GFPGAN, Upscaler', value=False)
                           bg_upsampling = gr.Checkbox(label='BG Enhancement', value=False)
-                      upscale = gr.Slider(minimum=1, maximum=8, step=1, label='Upscaler, 1 to turn off', value=1, interactive=True)
+                          upscale = gr.Slider(minimum=1, maximum=8, step=1, label='Upscaler, 1 to turn off', value=1, interactive=True)
                       W = gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512, interactive=True)#width
                       H = gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512, interactive=True)#height
                       steps = gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100, interactive=True)#steps
@@ -1333,6 +1527,8 @@ with demo:
                     b_init_image = gr.Textbox(label='Init Image link',  placeholder='https://cdn.pixabay.com/photo/2022/07/30/13/10/green-longhorn-beetle-7353749_1280.jpg', lines=1)#init_image
                     b_strength = gr.Slider(minimum=0, maximum=1, step=0.1, label='Init Image Strength', value=0.5, interactive=True)#strength
                     b_make_grid = gr.Checkbox(label='Make Grid', value=False, visible=True)#make_grid
+                    b_use_mask = gr.Checkbox(label='Use Mask', value=False, visible=False)
+                    b_mask_file = gr.Textbox(label='Mask File', value='', visible=False) #
                 with gr.Column():
                     batch_outputs = gr.Gallery()
                     b_GFPGAN = gr.Checkbox(label='GFPGAN, Face Resto, Upscale', value=False)
@@ -1345,21 +1541,53 @@ with demo:
                     b_batch_name = gr.Textbox(label='Batch Name',  placeholder='Batch_001', lines=1, value='SDAnim', interactive=True)#batch_name
                     b_outdir = gr.Textbox(label='Output Dir',  placeholder='/content/', lines=1, value='/gdrive/MyDrive/sd_anims/', interactive=True)#outdir
                     batch_btn = gr.Button('Generate')
+        with gr.TabItem('InPainting'):
+            with gr.Row():
+                with gr.Column():
+                    refresh_btn = gr.Button('Refresh')
+                    inPaint = gr.Image(value=inPaint, source="upload", interactive=True,
+                                                                      type="pil", tool="sketch", visible=True,
+                                                                      elem_id="mask")
+                    i_animation_prompts = gr.Textbox(label='Prompts',
+                                                    placeholder='a beautiful forest by Asher Brown Durand, trending on Artstation\na beautiful city by Asher Brown Durand, trending on Artstation',
+                                                    lines=1)#animation_prompts
+                    inPaint_btn = gr.Button('Generate')
+                    i_strength = gr.Slider(minimum=0, maximum=1, step=0.01, label='Init Image Strength', value=0.00, interactive=True)#strength
+                    i_batch_name = gr.Textbox(label='Batch Name',  placeholder='Batch_001', lines=1, value='SDAnim', interactive=True)#batch_name
+                    i_outdir = gr.Textbox(label='Output Dir',  placeholder='/content/', lines=1, value='/gdrive/MyDrive/sd_anims/', interactive=True)#outdir
 
 
-    batch_inputs = [b_animation_mode, b_animation_prompts, key_frames,
-    prompts, b_batch_name, b_outdir, max_frames, b_GFPGAN,
-    b_bg_upsampling, b_upscale, b_W, b_H, b_steps, b_scale,
-    angle, zoom, translation_x, translation_y, translation_z,
-    rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping,
-    midas_weight, near_plane, far_plane, fov, padding_mode,
-    sampling_mode, b_seed_behavior, b_seed, interp_spline, noise_schedule,
-    strength_schedule, contrast_schedule, sampler, extract_nth_frame,
-    interpolate_x_frames, border, color_coherence, previous_frame_noise,
-    previous_frame_strength, video_init_path, save_grid, b_save_settings,
-    b_save_samples, display_samples, b_n_batch, b_n_samples, b_ddim_eta,
-    b_use_init, b_init_image, b_strength, timestring,
-    resume_from_timestring, resume_timestring, b_make_grid]
+
+                with gr.Column():
+                    inPainted = gr.Gallery()
+                    i_sampler = gr.Radio(label='Sampler',
+                                     choices=['klms','dpm2','dpm2_ancestral','heun','euler','euler_ancestral','plms', 'ddim'],
+                                     value='klms', interactive=True)#sampler
+                    with gr.Row():
+                        i_GFPGAN = gr.Checkbox(label='GFPGAN, Upscaler', value=False)
+                        i_bg_upsampling = gr.Checkbox(label='BG Enhancement', value=False)
+                        i_upscale = gr.Slider(minimum=1, maximum=8, step=1, label='Upscaler, 1 to turn off', value=1, interactive=True)
+                    with gr.Row():
+                        i_W = gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512, interactive=True)#width
+                        i_H = gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512, interactive=True)#height
+                    i_steps = gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100, interactive=True)#steps
+                    i_scale = gr.Slider(minimum=1, maximum=25, step=1, label='Scale', value=11, interactive=True)#scale
+                    use_mask = gr.Checkbox(label='Use Mask Path', value=True, visible=False) #@param {type:"boolean"}
+                    mask_file = gr.Textbox(label='Mask File', placeholder='https://www.filterforge.com/wiki/images/archive/b/b7/20080927223728%21Polygonal_gradient_thumb.jpg', interactive=True) #@param {type:"string"}
+                    invert_mask = gr.Checkbox(label='Invert Mask', value=True, interactive=True) #@param {type:"boolean"}
+                    # Adjust mask image, 1.0 is no adjustment. Should be positive numbers.
+                    with gr.Row():
+
+                        mask_brightness_adjust = gr.Slider(minimum=0, maximum=2, step=0.1, label='Mask Brightness', value=1.0, interactive=True)
+                        mask_contrast_adjust = gr.Slider(minimum=0, maximum=2, step=0.1, label='Mask Contrast', value=1.0, interactive=True)
+                    #
+                    i_animation_mode = gr.Dropdown(label='Animation Mode',
+                                                      choices=['None', '2D', '3D', 'Video Input', 'Interpolation'],
+                                                      value='None',
+                                                      visible=False)#animation_mode
+                    i_max_frames = gr.Slider(minimum=1, maximum=1, step=1, label='Steps', value=1, visible=False)#inpaint_frames=0
+                    i_use_init = gr.Checkbox(label='use_init', value=True, visible=False)
+                    i_init_image = gr.Textbox(label='Init Image link',  placeholder='https://cdn.pixabay.com/photo/2022/07/30/13/10/green-longhorn-beetle-7353749_1280.jpg', lines=1)#init_image
 
 
 
@@ -1377,9 +1605,48 @@ with demo:
     previous_frame_strength, video_init_path, save_grid, save_settings,
     save_samples, display_samples, n_batch, n_samples, ddim_eta,
     use_init, init_image, strength, timestring,
-    resume_from_timestring, resume_timestring, make_grid]
+    resume_from_timestring, resume_timestring, make_grid, inPaint, b_use_mask,
+    b_mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust]
+
+    batch_inputs = [b_animation_mode, b_animation_prompts, key_frames,
+    prompts, b_batch_name, b_outdir, max_frames, b_GFPGAN,
+    b_bg_upsampling, b_upscale, b_W, b_H, b_steps, b_scale,
+    angle, zoom, translation_x, translation_y, translation_z,
+    rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping,
+    midas_weight, near_plane, far_plane, fov, padding_mode,
+    sampling_mode, b_seed_behavior, b_seed, interp_spline, noise_schedule,
+    strength_schedule, contrast_schedule, sampler, extract_nth_frame,
+    interpolate_x_frames, border, color_coherence, previous_frame_noise,
+    previous_frame_strength, video_init_path, save_grid, b_save_settings,
+    b_save_samples, display_samples, b_n_batch, b_n_samples, b_ddim_eta,
+    b_use_init, b_init_image, b_strength, timestring,
+    resume_from_timestring, resume_timestring, b_make_grid, inPaint, b_use_mask,
+    b_mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust]
+
+    mask_inputs = [i_animation_mode, i_animation_prompts, key_frames,
+    prompts, i_batch_name, i_outdir, i_max_frames, i_GFPGAN,
+    i_bg_upsampling, i_upscale, i_W, i_H, i_steps, i_scale,
+    angle, zoom, translation_x, translation_y, translation_z,
+    rotation_3d_x, rotation_3d_y, rotation_3d_z, use_depth_warping,
+    midas_weight, near_plane, far_plane, fov, padding_mode,
+    sampling_mode, seed_behavior, seed, interp_spline, noise_schedule,
+    strength_schedule, contrast_schedule, sampler, extract_nth_frame,
+    interpolate_x_frames, border, color_coherence, previous_frame_noise,
+    previous_frame_strength, video_init_path, save_grid, save_settings,
+    save_samples, display_samples, n_batch, n_samples, ddim_eta,
+    i_use_init, i_init_image, i_strength, timestring,
+    resume_from_timestring, resume_timestring, make_grid, inPaint, use_mask,
+    mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust]
+
+
+
+
+
+
+
     anim_outputs = [mp4_paths]
     batch_outputs = [batch_outputs]
+    inPaint_outputs = [inPainted]
 
     #print(anim_output)
     #print(anim_outputs)
@@ -1387,7 +1654,8 @@ with demo:
 
     #print(f'orig: {mp4_paths}')
     #print(f'list: {list(mp4_paths)}')
-
+    refresh_btn.click(refresh, inputs=inPaint, outputs=inPaint)
+    inPaint_btn.click(fn=anim, inputs=mask_inputs, outputs=inPaint_outputs)
     anim_btn.click(fn=anim, inputs=anim_inputs, outputs=anim_outputs)
     batch_btn.click(fn=anim, inputs=batch_inputs, outputs=batch_outputs)
 
