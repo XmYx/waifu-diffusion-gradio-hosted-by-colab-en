@@ -1216,7 +1216,6 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 demo = gr.Blocks()
 
 with demo:
-    gr.Markdown('Stable Diffusion 1.4 GUI v0.3')
     with gr.Tabs():
         with gr.TabItem('Animation'):
             with gr.Row():
@@ -1238,17 +1237,7 @@ with demo:
                     anim_btn = gr.Button('Generate')
                 with gr.Column(scale=1.6):
                         mp4_paths = gr.Video(label='Generated Video')
-                        sampler = gr.Radio(label='Sampler',
-                                          choices=['klms','dpm2','dpm2_ancestral','heun','euler','euler_ancestral','plms', 'ddim'],
-                                          value='klms', interactive=True)#sampler
-                        with gr.Row():
-                            GFPGAN = gr.Checkbox(label='GFPGAN, Upscaler', value=False)
-                            bg_upsampling = gr.Checkbox(label='BG Enhancement', value=False)
-                        upscale = gr.Slider(minimum=1, maximum=8, step=1, label='Upscaler, 1 to turn off', value=1, interactive=True)
-                        W = gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512, interactive=True)#width
-                        H = gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512, interactive=True)#height
-                        steps = gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100, interactive=True)#steps
-                        scale = gr.Slider(minimum=1, maximum=25, step=1, label='Scale', value=11, interactive=True)#scale
+
                         #output = gr.Text()
                 with gr.Column(scale=2.5):
                     with gr.TabItem('Movements'):
@@ -1270,12 +1259,25 @@ with demo:
                                 fov = gr.Slider(minimum=0, maximum=360, step=1, label='FOV', value=40, visible=True)#fov
                                 padding_mode = gr.Dropdown(label='Padding Mode', choices=['border', 'reflection', 'zeros'], value='border', visible=True)#padding_mode
                                 sampling_mode = gr.Dropdown(label='Sampling Mode', choices=['bicubic', 'bilinear', 'nearest'], value='bicubic', visible=True)#sampling_mode
-                    with gr.TabItem('Video Init / Interpolation'):
-                        video_init_path = gr.Textbox(label='Video init path',  placeholder='/content/video_in.mp4', lines=1)#video_init_path
-                        extract_nth_frame = gr.Slider(minimum=1, maximum=100, step=1, label='Extract n-th frame', value=1)#extract_nth_frame
-                        interpolate_x_frames = gr.Slider(minimum=1, maximum=25, step=1, label='Interpolate n frames', value=4)#interpolate_x_frames
-                        previous_frame_noise = gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Noise', value=0.02)#previous_frame_noise
-                        previous_frame_strength = gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Strength', value=0.4)#previous_frame_strength
+                    with gr.TabItem('Video / Init Video / Interpolation settings'):
+                      sampler = gr.Radio(label='Sampler',
+                                          choices=['klms','dpm2','dpm2_ancestral','heun','euler','euler_ancestral','plms', 'ddim'],
+                                          value='klms', interactive=True)#sampler
+                      with gr.Row():
+                          GFPGAN = gr.Checkbox(label='GFPGAN, Upscaler', value=False)
+                          bg_upsampling = gr.Checkbox(label='BG Enhancement', value=False)
+                      upscale = gr.Slider(minimum=1, maximum=8, step=1, label='Upscaler, 1 to turn off', value=1, interactive=True)
+                      W = gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512, interactive=True)#width
+                      H = gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512, interactive=True)#height
+                      steps = gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100, interactive=True)#steps
+                      scale = gr.Slider(minimum=1, maximum=25, step=1, label='Scale', value=11, interactive=True)#scale
+                      video_init_path = gr.Textbox(label='Video init path',  placeholder='/content/video_in.mp4', lines=1)#video_init_path
+                      with gr.Row():
+                          extract_nth_frame = gr.Slider(minimum=1, maximum=100, step=1, label='Extract n-th frame', value=1)#extract_nth_frame
+                          interpolate_x_frames = gr.Slider(minimum=1, maximum=25, step=1, label='Interpolate n frames', value=4)#interpolate_x_frames
+                      with gr.Row():
+                          previous_frame_noise = gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Noise', value=0.02)#previous_frame_noise
+                          previous_frame_strength = gr.Slider(minimum=0.01, maximum=1.00, step=0.01, label='Prev Frame Strength', value=0.4)#previous_frame_strength
                     with gr.TabItem('Anim Settings'):
                         with gr.Row():
                             with gr.Column(scale=0.15):
