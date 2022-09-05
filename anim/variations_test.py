@@ -41,7 +41,10 @@ sys.path.extend([
     '/content/pytorch3d-lite',
     '/content/AdaBins',
     '/content/MiDaS',
+    '/content/soup'
 ])
+
+
 
 import py3d_tools as p3d
 from helpers import save_samples, sampler_fn
@@ -53,11 +56,75 @@ from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
 from midas.dpt_depth import DPTDepthModel
 from midas.transforms import Resize, NormalizeImage, PrepareForNet
+
+import nsp_pantry
+from nsp_pantry import nspterminology, nsp_parse
 models_path = "/gdrive/MyDrive/" #@param {type:"string"}
 output_path = "/content/output" #@param {type:"string"}
 
 mount_google_drive = False #@param {type:"boolean"}Will Remove
 force_remount = False #Will Remove
+
+class log:
+    f = lambda color: lambda string: print(color + string + "\33[0m")
+    black = f("\33[30m")
+    red = f("\33[31m")
+    green = f("\33[32m")
+    yellow = f("\33[33m")
+    blue = f("\33[34m")
+    megenta = f("\33[35m")
+    cyan = f("\33[36m")
+    white = f("\33[37m")
+
+
+
+terminology_database = nspterminology
+
+if terminology_database:
+	log.green("Loaded terminology database from the pantry.")
+	print("\x1B[3mMmm. Noodle Soup.\x1B[0m")
+else:
+	log.red("Unable to load terminology database")
+
+
+def process_noodle_soup(text_prompts):
+
+  new_prom = list(text_prompts.split("\n"))
+  nan = "nan"
+  prompt_series = pd.Series([np.nan for a in range(len(new_prom))])
+  for i, nan in prompt_series.items():
+    print(i)
+    print(nan)
+    prompt_series[i] = new_prom[i]
+  text_prompts = new_prom
+
+  terms = []
+  for term in terminology_database:
+    if term not in terms:
+      terms.append(term)
+
+  processed_prompt_list = {}
+  processed_prompts = []
+
+  print("")
+  print("text_prompts = {")
+  #for pstep, pvalue in text_prompts.items():
+    #print("    "+str(pstep)+": [")
+  for prompt in text_prompts:
+    new_prompt = prompt
+    for term in terms:
+      tk = '_'+term+'_'
+      tc = prompt.count(tk)
+      for i in range(tc):
+        new_prompt = new_prompt.replace(tk, random.choice(terminology_database[term]), 1)
+    processed_prompts.append(new_prompt)
+    #processed_prompt_list[pstep] = processed_prompts
+    for npr in processed_prompts:
+      log.yellow("        \""+npr+"\",")
+    print("        ],")
+    processed_prompts = []
+  print("}")
+  return npr
 
 class MemUsageMonitor(threading.Thread):
     stop_flag = False
@@ -129,7 +196,7 @@ def crash(e, s):
     t = threading.Timer(0.25, os._exit, args=[0])
     t.start()
 
-def load_model_from_config(config, ckpt, verbose=False, device='cuda', half_precision=True):
+def load_model_from_config(config, ckpt, verbose=False, device='cpu', half_precision=True):
     map_location = "cpu" #@param ["cpu", "cuda"]
     print(f"Loading model from {ckpt}")
     pl_sd = torch.load(ckpt, map_location=map_location)
@@ -704,6 +771,8 @@ def generate(args, return_latent=False, return_sample=False, return_c=False):
 
 def generate(args, return_latent=False, return_sample=False, return_c=False):
 
+
+
     seed_everything(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -837,9 +906,10 @@ def generate(args, return_latent=False, return_sample=False, return_c=False):
     return results
 
 def sample_model(input_im, model_var, sampler, precision, h, w, ddim_steps, n_samples, scale, ddim_eta):
+    model_var.to("cuda")
     precision_scope = autocast if precision=="autocast" else nullcontext
     with torch.no_grad():
-        with precision_scope(nullcontext):
+        with precision_scope('cuda'):
             with model_var.ema_scope():
                 c = model_var.get_learned_conditioning(input_im).tile(n_samples,1,1)
 
@@ -860,13 +930,21 @@ def sample_model(input_im, model_var, sampler, precision, h, w, ddim_steps, n_sa
                                                  x_T=None)
 
                 x_samples_ddim = model_var.decode_first_stage(samples_ddim)
-                return torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0).cpu()
+                img = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0).cpu()
+                del x_samples_ddim
+                del samples_ddim
+                del c
+                mem = torch.cuda.memory_allocated()/1e6
+                model_var.to('cpu')
+                while(torch.cuda.memory_allocated()/1e6 >= mem):
+                    time.sleep(1)
+                return img
 
 def load_var_model_from_config(config_var, ckpt_var, device, verbose=False, half_precision=True):
-    model.to("cpu")
+    #model.to("cpu")
     torch_gc()
     print(f"Loading model from {ckpt_var}")
-    pl_sd = torch.load(ckpt_var, map_location="cpu")
+    pl_sd = torch.load(ckpt_var, map_location=device)
     if "global_step" in pl_sd:
         print(f"Global Step: {pl_sd['global_step']}")
     sd = pl_sd["state_dict"]
@@ -878,12 +956,18 @@ def load_var_model_from_config(config_var, ckpt_var, device, verbose=False, half
     if len(u) > 0 and verbose:
         print("unexpected keys:")
         print(u)
-    model.to("cpu")
+    #model.to("cpu")
     torch_gc()
-    model_var.to(device)
+    model_var.half().to(device)
     model_var.eval()
     return model_var
+ckpt_var="/gdrive/MyDrive/sd-clip-vit-l14-img-embed_ema_only.ckpt"
+config_var="sd_vars/stable-diffusion/configs/stable-diffusion/sd-image-condition-finetune.yaml"
+config_var = OmegaConf.load(config_var)
 
+device='cpu'
+model_var = load_var_model_from_config(config_var, ckpt_var, device)
+device='cuda'
 def variations(input_im, outdir, var_samples, var_plms):
     #im_path="data/example_conditioning/superresolution/sample_0.jpg",
     ckpt_var="/gdrive/MyDrive/sd-clip-vit-l14-img-embed_ema_only.ckpt"
@@ -893,7 +977,7 @@ def variations(input_im, outdir, var_samples, var_plms):
     h=512
     w=512
     n_samples=var_samples
-    precision="fp16"
+    precision="autocast"
     if var_plms == True:
         plms=True
     ddim_steps=50
@@ -906,8 +990,8 @@ def variations(input_im, outdir, var_samples, var_plms):
     input_im = transforms.ToTensor()(input_im).unsqueeze(0).to(device)
     input_im = input_im*2-1
     #input_im = load_im(im_path).to(device)
-    config_var = OmegaConf.load(config_var)
-    model_var = load_var_model_from_config(config_var, ckpt_var, device)
+
+
 
     if plms:
         sampler = PLMSSampler(model_var)
@@ -928,6 +1012,9 @@ def variations(input_im, outdir, var_samples, var_plms):
         paths.append(f"{sample_path}/{base_count:05}.png")
 
         base_count += 1
+    del x_samples_ddim
+    del sampler
+    torch_gc()
     return paths
 
 def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts: str, batch_name: str, outdir: str, max_frames: int, GFPGAN: bool, bg_upsampling: bool, upscale: int, W: int, H: int, steps: int, scale: int, angle: str, zoom: str, translation_x: str, translation_y: str, translation_z: str, rotation_3d_x: str, rotation_3d_y: str, rotation_3d_z: str, use_depth_warping: bool, midas_weight: float, near_plane: int, far_plane: int, fov: int, padding_mode: str, sampling_mode: str, seed_behavior: str, seed: str, interp_spline: str, noise_schedule: str, strength_schedule: str, contrast_schedule: str, sampler: str, extract_nth_frame: int, interpolate_x_frames: int, border: str, color_coherence: str, previous_frame_noise: float, previous_frame_strength: float, video_init_path: str, save_grid: bool, save_settings: bool, save_samples: bool, display_samples: bool, n_batch: int, n_samples: int, ddim_eta: float, use_init: bool, init_image: str, strength: float, timestring: str, resume_from_timestring: bool, resume_timestring: str, make_grid: bool, init_img_array, use_mask, mask_file, invert_mask, mask_brightness_adjust, mask_contrast_adjust):
@@ -936,7 +1023,10 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
 
 
 
-    model.to("cuda")
+    model.to('cuda')
+
+
+
     torch_gc()
     images = []
     results = []
@@ -1232,6 +1322,7 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
         return frames
 
     def render_image_batch(args):
+        model.to('cuda')
         #args.prompts = prompts
 
         args.prompts = list(args.animation_prompts.split("\n"))
@@ -1493,28 +1584,42 @@ def anim(animation_mode: str, animation_prompts: str, key_frames: bool, prompts:
     if args.animation_mode == '2D' or args.animation_mode == '3D':
         render_animation(args)
         makevideo(args)
+        mem = torch.cuda.memory_allocated()/1e6
         model.to("cpu")
+
+        while(torch.cuda.memory_allocated()/1e6 >= mem):
+            time.sleep(1)
         torch_gc()
         return args.mp4_path
     elif args.animation_mode == 'Video Input':
         render_input_video(args)
         makevideo(args)
+        mem = torch.cuda.memory_allocated()/1e6
         model.to("cpu")
+
+        while(torch.cuda.memory_allocated()/1e6 >= mem):
+            time.sleep(1)
         torch_gc()
         return args.mp4_path
     elif args.animation_mode == 'Interpolation':
         render_interpolation(args)
         makevideo(args)
+        mem = torch.cuda.memory_allocated()/1e6
         model.to("cpu")
+
+        while(torch.cuda.memory_allocated()/1e6 >= mem):
+            time.sleep(1)
         torch_gc()
         return args.mp4_path
     else:
         render_image_batch(args)
+        mem = torch.cuda.memory_allocated()/1e6
         model.to("cpu")
+
+        while(torch.cuda.memory_allocated()/1e6 >= mem):
+            time.sleep(1)
         torch_gc()
         return args.outputs
-
-
 def refresh(choice):
     print(choice)
     #choice = None
@@ -1524,6 +1629,59 @@ torch_gc()
 inPaint=None
 
 demo = gr.Blocks()
+soup_help1 = """
+  ##                     Adjective Types\n
+  * _adj-architecture_ - A list of architectural adjectives and styles\n
+  * _adj-beauty_ - A list of beauty adjectives for people (maybe things?)\m
+  * _adj-general_ - A list of general adjectives for people/things.
+  * _adj-horror_ - A list of horror adjectives
+  ##                        Art Types
+  * _artist_ - A comprehensive list of artists by MisterRuffian (Discord Misterruffian#2891)
+  * _color_ - A comprehensive list of colors
+  * _portrait-type_ - A list of common portrait types/poses
+  * _style_ - A list of art styles and mediums
+  Computer Graphics Types
+  * _3d-terms_ - A list of 3D graphics terminology
+  * _color-palette_ - A list of computer and video game console color palettes
+  * _hd_ - A list of high definition resolution terms
+  ##Miscellaneous Types
+  * _details_ - A list of detail descriptors
+  * _site_ - A list of websites to query
+  * _gen-modififer_ - A list of general modifiers adopted from Weird Wonderful AI Art
+  * _neg-weight_ - A lsit of negative weight ideas
+  * _punk_ - A list of punk modifier (eg. cyberpunk)
+  * _pop-culture_ - A list of popular culture movies, shows, etc
+  * _pop-location_ - A list of popular tourist locations
+  * _fantasy-setting_ - A list of fantasy location settings
+  * _fantasy-creature_ - A list of fantasy creatures
+  """
+soup_help2 = """
+  ##                Noun Types
+  * _noun-beauty_ - A list of beauty related nouns
+  * _noun-emote_ - A list of emotions and expressions
+  * _noun-fantasy_ - A list of fantasy nouns
+  * _noun-general_ - A list of general nouns
+  * _noun-horror_ - A list of horror nouns
+  ##People Types
+  * _bodyshape_ - A list of body shapes
+  * _celeb_ - A list of celebrities
+  * _eyecolor_ - A list of eye colors
+  * _hair_ - A list of hair types
+  * _nationality_ - A list of nationalities
+  * _occputation_ A list of occupation types
+  * _skin-color_ - A list of skin tones
+  * _identity-young_ A list of young identifiers
+  * _identity-adult_ A list of adult identifiers
+  * _identity_ A list of general identifiers
+  ##Photography / Image / Film Types
+  * _aspect-ratio_ - A list of common aspect ratios
+  * _cameras_ - A list of camera models (including manufactuerer)
+  * _camera-manu_ - A list of camera manufacturers
+  * _f-stop_ - A list of camera aperture f-stop
+  * _focal-length_ - A list of focal length ranges
+  * _photo-term_ - A list of photography terms relating to photos
+  """
+
 
 with demo:
     with gr.Tabs():
@@ -1709,14 +1867,25 @@ with demo:
                     with gr.Row():
                         with gr.Column():
                             input_var = gr.Image()
-                            var_samples = gr.Slider(minimum=1, maximum=4, step=1, label='Samples (keep on 1)', value=1)#n_samples
+                            var_samples = gr.Slider(minimum=1, maximum=3, step=1, label='Samples (V100 = 3 x 512x512)', value=1)#n_samples
                             var_plms = gr.Checkbox(label='PLMS (Off is DDIM)', value=True, visible=True, interactive=True)
                         output_var = gr.Gallery()
                     var_outdir = gr.Textbox(label='Output Folder',  value='/gdrive/MyDrive/variations', lines=1)
                     var_btn = gr.Button('Variations')
+        with gr.TabItem('NoodleSoup'):
+            with gr.Column():
+                input_prompt = gr.Textbox(label='IN',  placeholder='Portrait of a _adj-beauty_ _noun-emote_ _nationality_ woman from _pop-culture_ in _pop-location_ with pearlescent skin and white hair by _artist_, _site_', lines=3)
+                output_prompt = gr.Textbox(label='OUT',  placeholder='Your Soup', lines=3)
+                soup_btn = gr.Button('Cook')
+
+                gr.Markdown(value=soup_help1)
+                gr.Markdown(value=soup_help2)
 
     var_inputs = [input_var, var_outdir, var_samples, var_plms]
     var_outputs = [output_var]
+
+    soup_inputs = [input_prompt]
+    soup_outputs = [output_prompt]
 
 
 
@@ -1785,6 +1954,7 @@ with demo:
     #print(f'orig: {mp4_paths}')
     #print(f'list: {list(mp4_paths)}')
     var_btn.click(variations, inputs=var_inputs, outputs=var_outputs)
+    soup_btn.click(fn=process_noodle_soup, inputs=soup_inputs, outputs=soup_outputs)
 
     refresh_btn.click(refresh, inputs=inPaint, outputs=inPaint)
     inPaint_btn.click(fn=anim, inputs=mask_inputs, outputs=inPaint_outputs)
