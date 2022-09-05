@@ -968,20 +968,20 @@ config_var = OmegaConf.load(config_var)
 device='cpu'
 model_var = load_var_model_from_config(config_var, ckpt_var, device)
 device='cuda'
-def variations(input_im, outdir, var_samples, var_plms):
+def variations(input_im, outdir, var_samples, var_plms, v_cfg_scale, v_steps, v_W, v_H, v_ddim_eta):
     #im_path="data/example_conditioning/superresolution/sample_0.jpg",
     ckpt_var="/gdrive/MyDrive/sd-clip-vit-l14-img-embed_ema_only.ckpt"
     config_var="sd_vars/stable-diffusion/configs/stable-diffusion/sd-image-condition-finetune.yaml"
     outpath=outdir
-    scale=3.0
-    h=512
-    w=512
+    scale=v_cfg_scale
+    h=v_H
+    w=v_W
     n_samples=var_samples
     precision="autocast"
     if var_plms == True:
         plms=True
-    ddim_steps=50
-    ddim_eta=1.0
+    ddim_steps=v_steps
+    ddim_eta=v_ddim_eta
     device_idx=0
 
 
@@ -1871,17 +1871,30 @@ with demo:
                             var_plms = gr.Checkbox(label='PLMS (Off is DDIM)', value=True, visible=True, interactive=True)
                         output_var = gr.Gallery()
                     var_outdir = gr.Textbox(label='Output Folder',  value='/gdrive/MyDrive/variations', lines=1)
+                    v_ddim_eta = gr.Slider(minimum=0, maximum=1, step=0.01, label='DDIM ETA', value=1.0, interactive=True)#scale
+
+                    with gr.Row():
+
+                        v_cfg_scale = gr.Slider(minimum=0, maximum=25, step=0.1, label='Cfg Scale', value=3.0, interactive=True)#scale
+                        v_steps = gr.Slider(minimum=1, maximum=300, step=1, label='Steps', value=100, interactive=True)#steps
+
+                    with gr.Row():
+                        v_W = gr.Slider(minimum=256, maximum=1024, step=64, label='Width', value=512, interactive=True)#width
+                        v_H = gr.Slider(minimum=256, maximum=1024, step=64, label='Height', value=512, interactive=True)#height
+
                     var_btn = gr.Button('Variations')
         with gr.TabItem('NoodleSoup'):
             with gr.Column():
                 input_prompt = gr.Textbox(label='IN',  placeholder='Portrait of a _adj-beauty_ _noun-emote_ _nationality_ woman from _pop-culture_ in _pop-location_ with pearlescent skin and white hair by _artist_, _site_', lines=3)
                 output_prompt = gr.Textbox(label='OUT',  placeholder='Your Soup', lines=3)
+
+
                 soup_btn = gr.Button('Cook')
 
                 gr.Markdown(value=soup_help1)
                 gr.Markdown(value=soup_help2)
 
-    var_inputs = [input_var, var_outdir, var_samples, var_plms]
+    var_inputs = [input_var, var_outdir, var_samples, var_plms, v_cfg_scale, v_steps, v_W, v_H, v_ddim_eta]
     var_outputs = [output_var]
 
     soup_inputs = [input_prompt]
